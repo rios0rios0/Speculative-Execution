@@ -13,3 +13,4 @@ add_executable(attacker Spectre/rios0rios0/attacker.c)
 #Scripts to test
 add_executable(cache_time Tests/CacheTime.c)
 add_executable(kernel_table Tests/KernelTable.c)
+add_executable(virt_address Tests/VirtAddress.c)
