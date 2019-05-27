@@ -5,6 +5,23 @@
 
 uint8_t array[10 * 4096];
 
+mem_flush(const void *p, unsigned int allocation_size) {
+	const size_t cache_line = 64;
+	const char *cp = (const char *) p;
+	size_t i = 0;
+	for (i = 0; i < allocation_size; i += cache_line) {
+		asm volatile("clflush (%0)\n\t"
+		:
+		: "r"(&cp[i])
+		: "memory");
+	}
+
+	asm volatile("sfence\n\t"
+	:
+	:
+	: "memory");
+}
+
 int main(int argc, const char **argv) {
 	int junk = 0;
 	register uint64_t time1, time2;
@@ -15,6 +32,7 @@ int main(int argc, const char **argv) {
 	//FLUSH the array from the CPU cache
 	for (i = 0; i < 10; i++)
 		_mm_clflush(&array[i * 4096]);
+	//mem_flush(&array, sizeof(array));
 	//Access some of the array items
 	array[3 * 4096] = 100;
 	array[7 * 4096] = 200;

