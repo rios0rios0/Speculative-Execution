@@ -9,6 +9,7 @@ add_executable(rootkea Spectre/rootkea/script.c)
 add_executable(paboldin Meltdown/paboldin/script.c)
 #Testing exploits
 add_executable(victim Spectre/rios0rios0/victim.c)
+add_executable(victim2 Spectre/rios0rios0/victim2.c)
 add_executable(attacker Spectre/rios0rios0/attacker.c)
 #Scripts to test
 add_executable(cache_time Tests/CacheTime.c)
