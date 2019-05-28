@@ -4,30 +4,35 @@
 
 #include <stdint.h>
 #include <stdio.h>
-#include <zconf.h>
 #include <stdbool.h>
+#include <unistd.h>
+#include <stdlib.h>
 
-//The secret information on code (it's not matter)
-char *secret_info = "Secret information on code.";
-//Relative array, to query some address (arbitrary size)
-int address_array[16] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
-//Target array (1MB [131072 * 2], when int is a 4 bytes), for simulate conditional branch
-int target_array[262144];
+unsigned int array1_size = 16;
+uint8_t unused1[64];
+uint8_t array1[160] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16};
+uint8_t unused2[64];
+uint8_t array2[256 * 512];
+char *secret = "The Magic Words are Squeamish Ossifrage.";
+uint8_t temp = 0;
+
+void victim_function(size_t x) {
+	if (x < array1_size) {
+		temp &= array2[array1[x] * 512];
+	}
+}
 
 int main(int argc, char **argv) {
-	//Getting a external input (from user, for example)
-	int input_index = 0;
-	//Temporary variable for simulate a getting of OS
-	int temp;
-	while (true) {
-		read:
-		scanf("%d", &input_index);
-		//Test for generate a conditional branch
-		if (sizeof(address_array) > input_index) {
-			temp = target_array[address_array[input_index] * 512];
-		}
-		printf("vaddr %p\n", (void *) secret_info);
+	if (argc > 1) {
+		int input_index = (*argv[1] - '0');
+		victim_function(input_index);
+	} else {
 		printf("pid %ju\n", (uintmax_t) getpid());
-		goto read;
+		printf("vaddr of array1 %p\n", (void *) array1);
+		printf("vaddr of secret %p\n", (void *) secret);
+		//
+		while (true) {
+			sleep(1);
+		}
 	}
 }
