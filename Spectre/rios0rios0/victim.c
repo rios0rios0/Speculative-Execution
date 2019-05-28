@@ -30,9 +30,5 @@ int main(int argc, char **argv) {
 		printf("pid %ju\n", (uintmax_t) getpid());
 		printf("vaddr of array1 %p\n", (void *) array1);
 		printf("vaddr of secret %p\n", (void *) secret);
-		//
-		while (true) {
-			sleep(1);
-		}
 	}
 }
